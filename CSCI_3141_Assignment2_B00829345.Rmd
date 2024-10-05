@@ -1,0 +1,168 @@
+---
+title: "An Analysis of Popular Music"
+author: "Jett Wolfe, 2023"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+
+```{r init, echo=FALSE, message=FALSE}
+
+# Libraries 
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(lubridate)
+library(tidyr)
+library(DMwR2)
+
+# Reading in the data 
+data <- read_csv("spotify/spotify-2023.csv")
+
+```
+
+## Introduction
+```{r}
+head(data)
+summary(data)
+```
+The 953 observations in the Spotify dataset contain data pertaining to 24 different variables, with 20 quantitative values and 4 qualitative.. The first variable in the set, track_name, is the identifier for the observations. The remaining variables include information in regards to the release year, the song's placement on Spotify's charts & other music charts, the rudiments of the song, and Spotify's own specific categorical data of their songs. 
+
+What I would be interested in exploring would be which of Spotify's music qualities contribute more to the popularity of a song. Spotify's qualifiers are generally somewhat subjective, but depending on the trends of the time there are generally similarities between songs topping charts. Exploring the categories in relation to popularity would provide some interesting insight into the music trends of 2023. 
+
+Additionally, I have some interest in exploring the factors contributing to some of these categories. In particular, I would like to explore the relationship between the tempo of the songs (the variable bpm) and the danceability and energy, as well as the variable mode to the same factors.
+
+The last thing I would like to explore is if there is any relationship at all between the key signature (combination of the variables key & mode) and the overall popularity of the music. While I am not certain there will be any relationship at all, as a musician myself, this is something I've often thought about since I have noted a degree of repetition of keys when listening to the radio.
+
+**Questions**
+
+Which qualities of the songs have the greatest impact on their popularity? 
+
+Is there a relationship between the BPM and the dancebility and energy percentage? 
+
+Does the mode contribute to the dancebility and energy as well? 
+
+Do the most popular songs have any similarities in key signature? 
+
+## Data Quality Assessment
+
+### Assessment
+Checking for invalid values within the dataframe yields the following results.
+```{r}
+cat("Rows missing data: ", nrow(data[!complete.cases(data),]))
+badValues <- data %>% select(`danceability_%`:`speechiness_%`) %>%filter_all(any_vars(. > 100))
+cat("Invalid percentages:", nrow(badValues))
+
+cat("Columns with NAs:", colnames(data)[colSums(is.na(data)) > 0])
+```
+Additionally, looking at the summary reveals another issue:
+```{r}
+summary(data)
+```
+From the summary I noted is that streams are a character value, when they represent numeric values. Additionally, the release date is split into three separate variables (release_year, release_month, and release_day) of numeric type, when it could be one variable with a date type.
+
+Another thing to note is that the variables key & mode represent categories with limited possibilities. There are only 21 possible unique musical keys, and there are only 7 modes, with only 2 being used in contemporary music. Because of this, it would make more sense to represent these values with a factor type instead of a character type.
+
+### Cleaning
+The missing data is specifically values of the key variable & the shazam_charts variable. I chose to handle by omission, specifically using pairwise deletion. The information in the shazam_charts variable isn't relevant to my particular analysis questions, so cases only missing that information can remain. The key is relevant, however, and is not a kind of data that can be imputed as it is not dependent on any other type of variable.
+```{r}
+#Handling NAs by pairwise omission, removing 95 cases
+data <- data[!is.na(data$key),]
+
+#Combining the three date columns into one single column of ymd date format
+data <- data %>% unite("release_date", released_year:released_day)
+data$release_date <- ymd(data$release_date)
+
+#Convert the variables key & mode to factors
+data <- data %>% mutate_at(c("key", "mode"), as.factor)
+
+#Convert streams to a double
+data <- data %>% mutate_at("streams", as.numeric)
+```
+After converting the number of streams to a double, some new NAs are introduced. 
+```{r}
+data[is.na(data$streams),]
+```
+Only one row had a NA value introduced. Because of this, I have decided to just omit this particular observation.
+
+```{r}
+data <- data[!is.na(data$streams),]
+```
+
+## Exploratory Data Analysis
+
+### Which qualities of the songs have the greatest impact on their popularity?
+
+```{r}
+#Isolating relevant data
+q1_data <- data %>% select(c(track_name, in_spotify_charts, streams, `danceability_%`:`speechiness_%`))
+q1_data <- q1_data %>% filter(in_spotify_charts > 0) 
+
+#Rearranging the data to allow for better graphing 
+q1_data <- q1_data %>% pivot_longer(`danceability_%`:`speechiness_%`, names_to = "quality", values_to = "percentage")
+
+ggplot(data = q1_data, mapping = aes(x = in_spotify_charts, y = percentage, colour = quality)) + geom_point()
+```
+In the first glance at a plot of the qualities percentages in relation to their placement in the Spotify charts, there are a few trends immediately notable. First, the instrumentalness quality is general extremely low among all of the songs. Additionally, the speechiness and acousticness tends to trend lower among popular songs as well. The two highest trending qualities would be the energy and the dancebility. It's also important to note that valence has the most variance of all the qualities.
+
+In order to get a clearer sense of if there is a skew, I wanted to look at the average values & the 50th percentile of the qualities of the 50 most popular songs.
+```{r}
+q1_data[1:350,] %>% group_by(quality) %>% summarize(avg = mean(percentage), `50th_percentile` = quantile(percentage, 0.5))
+```
+Based on the information gathered, I believe that acousticness, instrumentalness, speechiness, and liveness are negatively correlated to popularity, danceability & energy are positively correlated, and valence is unrelated.
+
+### Is there a relationship between the BPM and the dancebility and energy percentage?
+```{r}
+#Isolating relevant data 
+q2_data <- data %>% select(c(bpm, `danceability_%`, `energy_%`))
+
+q2_data <- q2_data %>% pivot_longer(`danceability_%`:`energy_%`, names_to = "quality", values_to = "percentage")
+
+#Discretizing the BPM into equal width bins to avoid clutter
+q2_data <- q2_data %>% mutate(d_bpm = cut(q2_data$bpm,breaks = 20, include.lowest = TRUE))
+
+ggplot(data = q2_data, mapping = aes(x = d_bpm, y = percentage)) + geom_col(position="dodge") + facet_wrap(~quality) + coord_flip()
+```
+There seems to be a slight trend in BPM to the danceability, with the danceability being the highest around 86 - 157 range of the BPM. I had originally expected the danceability to have a clear upward tend, but it seems to have more of an arch, where it becomes less danceable again after a certain BPM. As for the energy, which I also expected to have a clear upward trend, with a higher BPM resulting in more energy. This does not seem to be the case, with there being very little variance between the bins.
+
+### Does the mode contribute to the dancebility and energy as well? 
+```{r}
+data %>% group_by(mode) %>% summarize(avg_dance = mean(`danceability_%`), avg_energy = mean(`energy_%`))
+```
+While I expected major keys to have a notably stronger danceability and energy, given that major keys are described as the "happy" mode, the difference between the averages shows that the minor keys have a higher average energy & danceability, although the difference between the two is almost negligible. From here, I wanted to explore the differences occuring in each key as well.
+
+```{r}
+data %>% group_by(key, mode) %>% summarize(avg_dance = mean(`danceability_%`), avg_energy = mean(`energy_%`))
+```
+Even looking at the individual keys, there is very little difference between the minor & major results. 
+
+The other quality I'm curious about at this stage is valence. Valence isn't a word that is used in music as far as I am aware, and is instead generally used in science
+```{r}
+data %>% ungroup
+data %>% group_by(mode) %>% summarize(avg_valence = mean(`valence_%`))
+```
+Interestingly, it seems again that my assumptions were not accurate, with both modes having a very similar valence average, again with the minor key having a higher average. based on the data, it seems that the mode has very little influence on the qualities of the songs.
+
+### Do the most popular songs have any similarities in key signature?
+```{r}
+#Isolating relevant data 
+q4_data <- data %>% select(in_spotify_charts, streams, key, mode) %>% arrange(in_spotify_charts, desc(streams)) %>% filter (in_spotify_charts != 0)
+
+ggplot(data = q4_data, mapping = aes(x = key, fill = mode)) + geom_histogram(stat = "count", position = "dodge")
+```
+As expected, there are definitive trends in the keys being used, with D# Major being the least popular by a fairly significant margin, and C# Major being the most popular. This becomes even more interesting when you consider the significance of relative minors. The relative minor of C# is a# minor, and as such these could be counted together. The relative minor of D# is c minor, which has no occurrences at all in the songs that have charted. Because of this, the divide is likely even greater than expected, however manipulating the data in a way that would allow me to chart this would likely take a very long time.
+
+```{r}
+ggplot(data = q4_data, mapping = aes(x = mode)) + geom_histogram(stat = "count")
+```
+Additionally, major keys are also more popular, although the divide isn't as large.
+
+## Conclusions
+
+After analyzing the data, I've come to a few clear conclusions. The first is that the qualities of the songs definitively impact their popularity, with the most popular songs almost always having a high danceability & energy percentage, as well as an extremely low instrumentalness, and a low speechiness & liveness. 
+
+Additionally, I found that the tempo & the mode have little impact on the qualities. This leads me to believe that the more classical components of the songs have a lesser impact on the qualities, and the less measurable components of the music, such as the chord progressions & content of the lyrics, have a more notable impact on the qualities of the song.
+
+Lastly, I was able to see clear trends in the keys of popular songs. This particular question was one that I was particularly excited to get to answer, as the topic has been of personal interest to me for years. The results were about what I expected based on my own personal experience. I would be interested in exploring the topic more, particularly by taking the time to combine major keys with their relative minors. Additionally, I would have interest in any data related to the chord progressions of the most popular songs, but unfortunately this data is not a part of the set. 
